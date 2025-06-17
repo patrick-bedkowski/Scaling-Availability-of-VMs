@@ -1,0 +1,71 @@
+#cloud-config
+system_info:
+  default_user:
+    name: user
+    home: /home/user
+    shell: /bin/bash
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    groups: users, admin
+    lock_passwd: false
+    plain_text_passwd: 'user'
+
+
+# package_update: true
+packages:
+  - python3-pip
+  - python3-venv
+
+write_files:
+  - path: /opt/webapp/main.py
+    permissions: '0755'
+    content: |
+      from fastapi import FastAPI
+      from cpu_load_generator import load_all_cores
+      import logging
+      import psutil
+      import time
+      import asyncio
+
+      app = FastAPI()
+      logging.basicConfig(filename='requests.log', level=logging.INFO, format='%(asctime)s %(message)s')
+
+      @app.get("/")
+      async def root():
+          start = time.time()
+          loop = asyncio.get_running_loop()
+          await loop.run_in_executor(None, load_all_cores, 1, 0.1)
+          end = time.time()
+          logging.info(f"Request processed in {end - start:.2f} seconds")
+          return {"message": "Request processed", "processing_time": f"{end - start:.2f} seconds"}
+
+      @app.get("/metrics")
+      async def metrics():
+          cpu_percent = psutil.cpu_percent(interval=1)
+          return {
+              "cpu_percent": cpu_percent
+          }
+  - path: /etc/systemd/system/webapp.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=FastAPI WebApp
+      After=network.target
+
+      [Service]
+      Type=simple
+      WorkingDirectory=/opt/webapp
+      ExecStart=/opt/webapp/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000
+      Restart=always
+      User=root
+
+      [Install]
+      WantedBy=multi-user.target
+
+runcmd:
+  - cd /opt/webapp
+  - python3 -m venv venv
+  - ./venv/bin/pip install fastapi uvicorn cpu-load-generator psutil
+  - systemctl daemon-reexec
+  - systemctl daemon-reload
+  - systemctl enable webapp
+  - systemctl start webapp
